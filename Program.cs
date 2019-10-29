@@ -12,12 +12,12 @@ namespace ProcessSuspender
     {
         const int WH_KEYBOARD_LL = 13;
         const int WM_KEYDOWN = 0x0100;
-        const int SW_MAXIMIZE = 3;
-        const int SW_MINIMIZE = 6;
+
         static LowLevelKeyboardProc KeyboardProc = HookCallback;
         static IntPtr KeyboardProcHookID = IntPtr.Zero;
 
         static string ProcessName = null;
+        static int ProcessID = -1;
         static int SuspendTime = 5000;
         static Keys Key = Keys.Pa1;
 
@@ -50,14 +50,35 @@ namespace ProcessSuspender
             DIRECT_IMPERSONATION = (0x0200)
         }
 
+        enum ShowCommand : int
+        {
+            HIDE = 0,
+            SHOWNORMAL = 1,
+            SHOWMINIMIZED = 2,
+            SHOWMAXIMIZED = 3,
+            SHOWNOACTIVATE = 4,
+            SHOW = 5,
+            MINIMIZE = 6,
+            SHOWMINNOACTIVE = 7,
+            SHOWNA = 8,
+            RESTORE = 9,
+            SHOWDEFAULT = 10,
+            FORCEMINIMIZE = 11,
+        }
+
         [DllImport("kernel32.dll")]
         static extern IntPtr OpenThread(ThreadAccess dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+        
         [DllImport("kernel32.dll")]
         static extern uint SuspendThread(IntPtr hThread);
+        
         [DllImport("kernel32.dll")]
         static extern int ResumeThread(IntPtr hThread);
+        
         [DllImport("kernel32", CharSet = CharSet.Auto, SetLastError = true)]
         static extern bool CloseHandle(IntPtr handle);
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
         [DllImport("user32.dll")]
         static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
@@ -84,7 +105,10 @@ namespace ProcessSuspender
 
         static void ParseConfig()
         {
-            ProcessName = ConfigurationManager.AppSettings["ProcessName"];
+            if (int.TryParse(ConfigurationManager.AppSettings["ProcessID"], out int processId))
+                ProcessID = processId;
+            else
+                ProcessName = ConfigurationManager.AppSettings["ProcessName"];
             SuspendTime = Int32.Parse(ConfigurationManager.AppSettings["SuspendTime"]);
             try
             {
@@ -116,21 +140,7 @@ namespace ProcessSuspender
                     var key = (Keys)Marshal.ReadInt32(lParam);
                     if (key != Key)
                         return CallNextHookEx(KeyboardProcHookID, nCode, wParam, lParam);
-                    var processes = Process.GetProcessesByName(ProcessName);
-                    if (!processes.Any())
-                    {
-                        throw new Exception($"Unable to find any process with the name of '{ProcessName}'!");
-                    }
-                    if (processes.Count() > 1)
-                    {
-                        throw new Exception($"Found more than one process with the name of '{ProcessName}'!");
-                    }
-                    var process = processes.Single();
-                    ShowWindow(process.MainWindowHandle, SW_MINIMIZE);
-                    SuspendProcess(process);
-                    Thread.Sleep(SuspendTime);
-                    ResumeProcess(process);
-                    ShowWindow(process.MainWindowHandle, SW_MAXIMIZE);
+                    Run();
                 }
                 return CallNextHookEx(KeyboardProcHookID, nCode, wParam, lParam);
             }
@@ -141,6 +151,37 @@ namespace ProcessSuspender
                 Console.ReadKey();
                 throw;
             }
+        }
+
+        private static void Run()
+        {
+            var processes = ProcessName != null
+                ? Process.GetProcessesByName(ProcessName)
+                : new[] { Process.GetProcessById(ProcessID) };
+            if (!processes.Any())
+            {
+                throw new Exception($"Unable to find any process with the name of '{ProcessName}'!");
+            }
+            if (processes.Count() > 1)
+            {
+                throw new Exception($"Found more than one process with the name of '{ProcessName}'!");
+            }
+            var process = processes.Single();
+            var currentProcess = Process.GetCurrentProcess();
+            Console.WriteLine($"Hiding the '{process.ProcessName}' process");
+            ShowWindow(process.MainWindowHandle, (int)ShowCommand.FORCEMINIMIZE);
+            Console.WriteLine($"Restoring this '{currentProcess.ProcessName}' process");
+            ShowWindow(currentProcess.MainWindowHandle, (int)ShowCommand.RESTORE);
+            Console.WriteLine($"Suspending the '{process.ProcessName}' process");
+            SuspendProcess(process);
+            Console.WriteLine($"Sleeping for {SuspendTime}ms");
+            Thread.Sleep(SuspendTime);
+            Console.WriteLine($"Resuming the '{process.ProcessName}' process");
+            ResumeProcess(process);
+            Console.WriteLine($"Hiding the current '{currentProcess.ProcessName}' process");
+            ShowWindow(currentProcess.MainWindowHandle, (int)ShowCommand.MINIMIZE);
+            Console.WriteLine($"Restoring the '{process.ProcessName}' process");
+            ShowWindow(process.MainWindowHandle, (int)ShowCommand.RESTORE);
         }
 
         static void SuspendProcess(Process process)
