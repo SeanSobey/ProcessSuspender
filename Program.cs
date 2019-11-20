@@ -19,6 +19,7 @@ namespace ProcessSuspender
         static string ProcessName = null;
         static int ProcessID = -1;
         static int SuspendTime = 5000;
+        static bool Kill = false;
         static Keys Key = Keys.Pa1;
 
         delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -110,6 +111,7 @@ namespace ProcessSuspender
             else
                 ProcessName = ConfigurationManager.AppSettings["ProcessName"];
             SuspendTime = Int32.Parse(ConfigurationManager.AppSettings["SuspendTime"]);
+            Kill = bool.Parse(ConfigurationManager.AppSettings["Kill"]);
             try
             {
                 Key = (Keys)Enum.Parse(typeof(Keys), ConfigurationManager.AppSettings["Key"]);
@@ -167,6 +169,12 @@ namespace ProcessSuspender
                 throw new Exception($"Found more than one process with the name of '{ProcessName}'!");
             }
             var process = processes.Single();
+            if (Kill)
+            {
+                process.Kill();
+                Console.WriteLine($"Killed the '{process.ProcessName}' process");
+                return;
+            }
             var currentProcess = Process.GetCurrentProcess();
             Console.WriteLine($"Hiding the '{process.ProcessName}' process");
             ShowWindow(process.MainWindowHandle, (int)ShowCommand.FORCEMINIMIZE);
